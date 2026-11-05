@@ -17,10 +17,13 @@ def fixture(root, *, duration=15, voice=False):
     source = SourceRef(root / 'source.db', ('session',))
     event = Event('event1', 'session', 1, 0, 'tool', 'terminal', 'ok', 'terminal', None)
     evidence = SessionSnapshot(1, 'snap', source, '2026-11-04', 'a'*64, (event,), 'Safe summary', ())
+    from compositor import _digest
     board = Storyboard(1, 'job1', 1, 'snap', 'a'*64,
                        DemoOptions(source, 'makers', duration, '16:9', 'clear', voice),
                        (Scene('s1', 0, duration*1000, 'One', 'Caption', 'Narration', ('event1',), 'art'),),
                        'Demo @NousResearch', 'b'*64)
+    from dataclasses import replace
+    board = replace(board, digest=_digest(replace(board, digest='')))
     approval = Approval(owner, board.digest, 1, 'c'*64, '2026-11-04', ('terminal', 'image_generate', 'text_to_speech'), ())
     plan = ArtPlan(42, evidence.source_sha256, ('event1',), 320, 180, 24, duration*1000)
     return evidence, board, approval, plan
@@ -57,6 +60,13 @@ class CompositorTests(unittest.TestCase):
         with self.assertRaises(CapabilityUnavailable):
             preflight_terminal(self.host, self.root, policy=self.policy)
         self.assertEqual(len(self.host.calls), 1)
+
+    def test_freeze_rejects_edited_board_even_if_digest_field_stale(self):
+        evidence, board, approval, plan = fixture(self.root)
+        from dataclasses import replace
+        edited = replace(board, scenes=(replace(board.scenes[0], narration='unapproved edit'),))
+        with self.assertRaisesRegex(RenderFailed, 'approval|evidence'):
+            freeze_render(evidence, edited, approval, (), plan)
 
     def test_freeze_rejects_missing_art_and_changed_hash(self):
         evidence, board, approval, plan = fixture(self.root)
@@ -111,9 +121,9 @@ class CompositorTests(unittest.TestCase):
         self.assertEqual(len(host.calls), 3)
 
     def test_preflight_then_real_terminal_render_and_probe(self):
-        """The in-process host dispatch runs real ffmpeg; synthetic silent fixture, not release."""
+        """Host-dispatched ffmpeg fixture with audible synthetic tone, NOT release narration."""
         import subprocess
-        evidence, board, approval, plan = fixture(self.root)
+        evidence, board, approval, plan = fixture(self.root, voice=True)
         art_dir = self.root / 'art'
         art_dir.mkdir()
         frames = []
@@ -123,16 +133,28 @@ class CompositorTests(unittest.TestCase):
             frames.append(asset(path, 'art', width=320, height=180))
         title_path = self.root / 'title.png'
         Image.new('RGB', (320, 180), 'green').save(title_path)
+        speech_path = self.root / 'speech.mp3'
+        subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi',
+                        '-i', 'sine=frequency=440:duration=3', '-q:a', '3', str(speech_path)],
+                       capture_output=True, check=True)
         frozen = freeze_render(evidence, board, approval,
-                               (asset(title_path, 'title', width=320, height=180), *frames), plan)
+                               (asset(title_path, 'title', width=320, height=180),
+                                asset(speech_path, 'speech', scene_id='s1', duration=3000),
+                                *frames), plan)
         class LocalHost(Host):
             def dispatch_tool(inner, name, args):
                 inner.calls.append((name, args))
                 result = subprocess.run(args['command'], shell=True, text=True, capture_output=True, timeout=60)
                 return json.dumps({'success': result.returncode == 0, 'exit_code': result.returncode,
-                                   'output': result.stdout[-5000:], 'error': result.stderr[-2000:] if result.returncode else None})
+                                   'output': (result.stdout + result.stderr)[-5000:],
+                                   'error': result.stderr[-2000:] if result.returncode else None})
         host = LocalHost()
-        bundle = compose(host, frozen, self.root, policy=self.policy)
+        with patch('media_tools._host_definitions', return_value={
+            'terminal': {'command', 'timeout'}, 'image_generate': {'prompt', 'aspect_ratio'},
+            'text_to_speech': {'text', 'output_path'}}):
+            bundle = compose(host, frozen, self.root, policy=self.policy)
+        from delivery import format_delivery
+        self.assertIn('MEDIA:', format_delivery(bundle))
         self.assertTrue(bundle.mp4.path.exists())
         metadata = probe_video(host, bundle, policy=self.policy)
         self.assertGreater(float(metadata['format']['duration']), 0)

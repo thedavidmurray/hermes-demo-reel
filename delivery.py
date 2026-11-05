@@ -10,14 +10,14 @@ from schemas import Asset, RenderBundle, RenderFailed
 
 def _caption(caption: str) -> None:
     if (not caption or len(caption) > 280 or '@NousResearch' not in caption or
-        re.search(r'(?i)(?:^|\s)(?:MEDIA|VOICE|AUDIO|FILE):', caption) or
+        re.search(r'(?i)(?:MEDIA|VOICE|AUDIO|FILE):', caption) or
         any(ord(char) < 32 and char not in '\n\t' for char in caption)):
         raise RenderFailed('unsafe or invalid X caption')
 
 
 def _check(asset: Asset, root: Path, *, expected_kind: str, expected_mime: str) -> None:
     path = asset.path.resolve(strict=False)
-    if not path.is_relative_to(root) or not path.is_file() or path.is_symlink():
+    if not asset.path.is_absolute() or asset.path.is_symlink() or not path.is_relative_to(root) or not path.is_file():
         raise RenderFailed('delivery asset missing or outside job root')
     if (asset.kind != expected_kind or asset.mime_type != expected_mime or
         not 0 < asset.size_bytes <= 24 * 1024 * 1024 or
