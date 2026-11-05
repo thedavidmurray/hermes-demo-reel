@@ -28,6 +28,31 @@ class PipelineTests(unittest.TestCase):
         self.addCleanup(clock.stop)
         clock_mock.now.return_value = fixtures.NOW
 
+    def test_expired_approval_after_compose_never_becomes_ready(self):
+        from contextlib import ExitStack
+        from datetime import timedelta
+        from dataclasses import dataclass
+        @dataclass
+        class FrozenFixture:
+            render_snapshot_id: str = 'fixture'
+        with ExitStack() as stack:
+            for name in ('resolve_media_tools', 'preflight_terminal', 'make_title',
+                         'plan_art', 'validate_delivery'):
+                stack.enter_context(patch.object(pipeline, name))
+            stack.enter_context(patch.object(pipeline, 'job_directory', return_value=self.helper.root))
+            stack.enter_context(patch.object(pipeline, 'render_art_sequence', return_value=()))
+            stack.enter_context(patch.object(pipeline, 'freeze_render', return_value=FrozenFixture()))
+            clock = stack.enter_context(patch.object(pipeline, 'datetime', wraps=datetime))
+            clock.now.side_effect = [fixtures.NOW,
+                                     datetime.fromisoformat(self.job.expires_at) + timedelta(seconds=1)]
+            stack.enter_context(patch.object(pipeline, 'compose', return_value={'fixture': True}))
+            with self.assertRaisesRegex(ApprovalRequired, 'APPROVAL_EXPIRED'):
+                pipeline.render_job(self.helper.ctx, self.owner, self.job.job_id,
+                                    policy=MediaPolicy(network_allowed=True))
+        current = store.load_job(self.owner, self.job.job_id)
+        self.assertEqual((current.state, current.error_code), ('RENDERING', 'RENDER_UNKNOWN'))
+        self.assertFalse((self.helper.root / 'bundle.json').exists())
+
     def test_wrong_owner_cannot_render_or_create_lease(self):
         with self.assertRaises(ContractError):
             pipeline.render_job(self.helper.ctx, fixtures.OTHER, self.job.job_id,

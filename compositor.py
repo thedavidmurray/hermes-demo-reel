@@ -334,7 +334,7 @@ def probe_video(ctx: Any, bundle: RenderBundle, *, policy: MediaPolicy) -> dict:
         streams = data['streams']
     except (TypeError, KeyError, ValueError) as exc:
         raise RenderFailed('invalid ffprobe output') from exc
-    if not 0 < duration <= 90.05 or not any(s.get('codec_name') == 'h264' for s in streams):
+    if not 0 < duration <= 90 or not any(s.get('codec_name') == 'h264' for s in streams):
         raise RenderFailed('MP4 duration/video codec invalid')
     manifest = json.loads(bundle.manifest_path.read_text(encoding='utf-8'))
     if manifest['video_sha256'] != bundle.mp4.sha256:

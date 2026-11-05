@@ -70,6 +70,14 @@ def render_job(ctx, owner: Owner, job_id: str, *, policy: MediaPolicy) -> Render
     frozen = freeze_render(snapshot,job.board,job.approval,(title,)+tuple(speech)+art,plan)
     (root/'frozen.json').write_text(store.canonical(frozen),encoding='utf-8')
     bundle = compose(ctx,frozen,root,policy=policy)
+    # Long-running generation/encoding must not turn an expired or revoked
+    # approval into a deliverable. Preserve the durable UNKNOWN claim on failure.
+    current = store.load_job(owner,job_id)
+    if (current.job_version != claimed.job_version or current.state != 'RENDERING'
+            or current.approval != job.approval or current.board != job.board):
+        raise ApprovalRequired('APPROVAL_CHANGED_DURING_RENDER')
+    if datetime.fromisoformat(current.expires_at) <= datetime.now(timezone.utc):
+        raise ApprovalRequired('APPROVAL_EXPIRED')
     validate_delivery(bundle,root)
     (root/'bundle.json').write_text(store.canonical(bundle),encoding='utf-8')
     store.save_job(replace(claimed,state='READY',render_snapshot_id=frozen.render_snapshot_id,error_code=None),

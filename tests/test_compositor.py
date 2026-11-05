@@ -89,6 +89,24 @@ class CompositorTests(unittest.TestCase):
         self.assertIn('libx264', argv)
         self.assertNotIn('Caption', ' '.join(argv))
 
+    def test_probe_strictly_rejects_duration_over_90_seconds(self):
+        from schemas import RenderBundle
+        path = self.root / 'demo.mp4'
+        path.write_bytes(b'fixture')
+        manifest = self.root / 'render-manifest.json'
+        video = asset(path, 'video')
+        manifest.write_text(json.dumps({'voice': False, 'video_sha256': video.sha256}))
+        bundle = RenderBundle('job1', 'digest', 'id', video, (), 'Demo @NousResearch', manifest)
+        self.policy.__dict__['_demo_preflight_roots'] = {self.root.resolve()}
+        def dispatch(name, args):
+            self.host.calls.append((name, args))
+            return json.dumps({'exit_code': 0, 'error': None, 'output': json.dumps({
+                'format': {'duration': '90.01'}, 'streams': [{'codec_name': 'h264'}]})})
+        self.host.dispatch_tool = dispatch
+        with self.assertRaisesRegex(RenderFailed, 'duration/video codec invalid'):
+            probe_video(self.host, bundle, policy=self.policy)
+        self.assertEqual(len(self.host.calls), 1)
+
     def test_voice_on_silent_audio_rejected_after_decode(self):
         evidence, board, approval, plan = fixture(self.root, voice=True)
         path = self.root / 'demo.mp4'

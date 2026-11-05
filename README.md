@@ -78,14 +78,18 @@ preview. Cron/noninteractive actions fail immediately instead of asking for inpu
 - Locality currently uses the installed terminal's private backend resolver;
   source identity uses installed gateway `SessionSource`. Doctor warns about
   these internal API imports. This compatibility debt is not a clean doctor claim.
-- End-to-end outcome probe and pinned disposable GitHub install are not yet
-  verified. Synthetic compositor fixtures are not real-session narration proof.
+- Pinned disposable GitHub installation of preview
+  `1ea78033b05e67c6302db27d3191d010b6f50ef9` and dependency-install validation
+  succeeded on Nov 4 after storage was restored. These checks do not establish
+  end-to-end outcome-probe, provider narration, or transport readiness.
+  Synthetic compositor fixtures are not real-session narration proof.
 - Real approved Hive title/TTS, a ≤90-second audible MP4, three PNG frame grabs,
   actual same-chat delivery receipt and independent integration review are still
   required before release. No catalog PR has been authorized or opened.
-- Dependency-install verification was blocked by host disk exhaustion. Validation
-  status must include its actual output; an exit zero alone is not proof that
-  `--install-deps` succeeded.
+- Validation status must include its actual output: an exit zero alone is not
+  proof that `--install-deps` succeeded. The installed Hermes launcher can also
+  auto-complete an interrupted source update before executing a command; a
+  timed-out launch is not a doctor result. Do not repair live core to pass gates.
 
 ## Development / unattended checks
 
