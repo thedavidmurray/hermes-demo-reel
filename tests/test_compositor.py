@@ -137,10 +137,13 @@ class CompositorTests(unittest.TestCase):
         subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi',
                         '-i', 'sine=frequency=440:duration=3', '-q:a', '3', str(speech_path)],
                        capture_output=True, check=True)
-        frozen = freeze_render(evidence, board, approval,
-                               (asset(title_path, 'title', width=320, height=180),
-                                asset(speech_path, 'speech', scene_id='s1', duration=3000),
-                                *frames), plan)
+        speech = asset(speech_path, 'speech', scene_id='s1', duration=3000)
+        title = asset(title_path, 'title', width=320, height=180)
+        from dataclasses import replace
+        with self.assertRaises(RenderFailed):
+            freeze_render(evidence, board, approval,
+                          tuple([title, replace(speech, dispatch_id=None), *frames]), plan)
+        frozen = freeze_render(evidence, board, approval, tuple([title, speech, *frames]), plan)
         class LocalHost(Host):
             def dispatch_tool(inner, name, args):
                 inner.calls.append((name, args))
