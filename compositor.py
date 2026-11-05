@@ -140,8 +140,8 @@ def freeze_render(snapshot: SessionSnapshot, board: Storyboard, approval: Approv
             raise RenderFailed('one TTS asset per approved scene required')
         for scene in board.scenes:
             item = next(a for a in speech if a.scene_id == scene.scene_id)
-            if item.duration_ms is None or item.duration_ms > scene.end_ms - scene.start_ms:
-                raise RenderFailed('TTS longer than approved scene')
+            if item.duration_ms is None or item.duration_ms > scene.end_ms - scene.start_ms or not item.dispatch_id:
+                raise RenderFailed('TTS longer than scene or missing host dispatch witness')
     elif speech:
         raise RenderFailed('unexpected voice assets on voice-off board')
     # No job_dir parameter here: verify immutable bytes now; compose rechecks every
