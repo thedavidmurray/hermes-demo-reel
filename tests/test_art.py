@@ -52,15 +52,30 @@ class ArtContractTests(unittest.TestCase):
         self.assertEqual(original.size, (720, 1280))
         self.assertEqual(original.tobytes(), render_art_frame(self.plan, self.snapshot.events, 200).tobytes())
         swapped = (self.snapshot.events[1], self.snapshot.events[0], self.snapshot.events[2])
-        self.assertNotEqual(original.tobytes(), render_art_frame(self.plan, swapped, 200).tobytes())
+        with self.assertRaises(ValueError):
+            render_art_frame(self.plan, swapped, 200)
+        reordered_plan = replace(self.plan, event_ids=tuple(e.event_id for e in swapped))
+        self.assertNotEqual(original.tobytes(), render_art_frame(reordered_plan, swapped, 200).tobytes())
         changed = (self.snapshot.events[0], replace(self.snapshot.events[1], status="ok"), self.snapshot.events[2])
         self.assertNotEqual(original.tobytes(), render_art_frame(self.plan, changed, 200).tobytes())
+        unknown = (replace(self.snapshot.events[0], status="unknown"), *self.snapshot.events[1:])
+        self.assertNotEqual(render_art_frame(self.plan, self.snapshot.events, 0).tobytes(),
+                            render_art_frame(self.plan, unknown, 0).tobytes())
 
     def test_validation_fail_closed(self):
         with self.assertRaises(ValueError):
             self.plan_art(self.snapshot, self.board, width=100, height=100)
         with self.assertRaises(ValueError):
+            self.plan_art(self.snapshot, self.board, width=1280, height=720)
+        with self.assertRaises(ValueError):
+            self.plan_art(replace(self.snapshot, source_sha256="a" * 63 + " "),
+                          replace(self.board, source_sha256="a" * 63 + " "), width=720, height=1280)
+        with self.assertRaises(ValueError):
             self.plan_art(self.snapshot, replace(self.board, source_sha256="b" * 64), width=720, height=1280)
+        with self.assertRaises(ValueError):
+            self.render_art_frame(replace(self.plan, fps=24.0), self.snapshot.events, 0)
+        with self.assertRaises(ValueError):
+            self.render_art_frame(replace(self.plan, width=720.0), self.snapshot.events, 0)
         with self.assertRaises(ValueError):
             self.render_art_frame(self.plan, self.snapshot.events, -1)
         with self.assertRaises(ValueError):
@@ -70,7 +85,8 @@ class ArtContractTests(unittest.TestCase):
 
     def test_landscape_and_empty_events(self):
         empty = replace(self.snapshot, events=())
-        landscape = self.plan_art(empty, self.board, width=1280, height=720)
+        landscape_board = replace(self.board, options=replace(self.board.options, aspect="16:9"))
+        landscape = self.plan_art(empty, landscape_board, width=1280, height=720)
         image = self.render_art_frame(landscape, (), 0)
         self.assertEqual(image.size, (1280, 720))
         self.assertEqual(image.mode, "RGBA")
