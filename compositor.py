@@ -13,7 +13,7 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
-from media_tools import _asset, _confined, call_tool
+from media_tools import _asset, _confined, call_tool, resolve_media_tools
 from schemas import (Approval, ArtPlan, Asset, CapabilityUnavailable, MediaPolicy,
                      RenderBundle, RenderFailed, RenderSnapshot, SessionSnapshot, Storyboard)
 
@@ -69,9 +69,9 @@ def preflight_terminal(ctx: Any, job_dir: Path, *, policy: MediaPolicy) -> None:
         nonce_file.unlink(missing_ok=True)
 
 
-def _validated_assets(root: Path, assets: tuple[Asset, ...]) -> None:
+def _validated_assets(root: Path | None, assets: tuple[Asset, ...]) -> None:
     for asset in assets:
-        path = _confined(asset.path, root)
+        path = _confined(asset.path, root) if root is not None else asset.path.resolve(strict=True)
         if path.stat().st_size != asset.size_bytes or hashlib.sha256(path.read_bytes()).hexdigest() != asset.sha256:
             raise RenderFailed('frozen asset checksum mismatch')
         if asset.kind in ('art', 'title', 'screenshot', 'frame'):
@@ -90,7 +90,8 @@ def _validated_assets(root: Path, assets: tuple[Asset, ...]) -> None:
 def freeze_render(snapshot: SessionSnapshot, board: Storyboard, approval: Approval,
                   assets: tuple[Asset, ...], art_plan: ArtPlan) -> RenderSnapshot:
     if (board.schema_version != 1 or snapshot.schema_version != 1 or
-        board.digest != approval.storyboard_digest or board.board_revision != approval.board_revision or
+        board.digest != approval.storyboard_digest or _digest(replace(board, digest='')) != board.digest or
+        board.board_revision != approval.board_revision or
         board.evidence_snapshot_id != snapshot.snapshot_id or
         board.source_sha256 != snapshot.source_sha256 or
         art_plan.source_sha256 != snapshot.source_sha256 or
@@ -102,9 +103,18 @@ def freeze_render(snapshot: SessionSnapshot, board: Storyboard, approval: Approv
     if not 1 <= len(board.scenes) <= 6 or not 15 <= board.options.duration_s <= 90:
         raise RenderFailed('invalid board duration/scenes')
     if (board.options.duration_s * 1000 != art_plan.duration_ms or
+        (board.options.aspect == '16:9' and art_plan.width <= art_plan.height) or
+        (board.options.aspect == '9:16' and art_plan.width >= art_plan.height) or
         (art_plan.width, art_plan.height) not in ((320, 180), (180, 320), (1280, 720), (720, 1280)) or
         art_plan.fps != 24):
         raise RenderFailed('art dimensions/duration unsupported')
+    cursor = 0
+    for scene in board.scenes:
+        if scene.start_ms != cursor or scene.end_ms <= cursor:
+            raise RenderFailed('noncontiguous approved storyboard')
+        cursor = scene.end_ms
+    if cursor != art_plan.duration_ms:
+        raise RenderFailed('storyboard does not fill approved duration')
     if any(scene.event_ids and not set(scene.event_ids) <= set(art_plan.event_ids) for scene in board.scenes):
         raise RenderFailed('scene references non-frozen event')
     expected = art_plan.fps * art_plan.duration_ms // 1000
@@ -114,8 +124,16 @@ def freeze_render(snapshot: SessionSnapshot, board: Storyboard, approval: Approv
         len({a.path.parent.resolve() for a in art}) != 1 or
         any((a.width, a.height) != (art_plan.width, art_plan.height) for a in art)):
         raise RenderFailed('art PNG sequence not fully frozen')
-    if len([asset for asset in assets if asset.kind == 'title']) != 1:
-        raise RenderFailed('generated title asset required')
+    titles = [asset for asset in assets if asset.kind == 'title']
+    if (len(titles) != 1 or 'image_generate' not in approval.allowed_external_tools or
+        not titles[0].dispatch_id):
+        raise RenderFailed('generated approved title asset required')
+    if board.options.voice and 'text_to_speech' not in approval.allowed_external_tools:
+        raise RenderFailed('speech was not approved')
+    if board.options.screenshots and 'browser_navigate' not in approval.allowed_external_tools:
+        raise RenderFailed('screenshots were not approved')
+    if board.options.music and 'music' not in approval.allowed_external_tools:
+        raise RenderFailed('music was not approved')
     speech = [asset for asset in assets if asset.kind == 'speech']
     if board.options.voice:
         if {asset.scene_id for asset in speech} != {scene.scene_id for scene in board.scenes} or len(speech) != len(board.scenes):
@@ -126,8 +144,9 @@ def freeze_render(snapshot: SessionSnapshot, board: Storyboard, approval: Approv
                 raise RenderFailed('TTS longer than approved scene')
     elif speech:
         raise RenderFailed('unexpected voice assets on voice-off board')
-    root = art[0].path.parent.resolve().parent
-    _validated_assets(root, assets)
+    # No job_dir parameter here: verify immutable bytes now; compose rechecks every
+    # asset against its explicit job_dir, never infers a parent from art layout.
+    _validated_assets(None, assets)
     frozen = RenderSnapshot(1, board.job_id + '-' + board.digest[:12], snapshot, board,
                             approval, assets, art_plan, art_plan.fps, art_plan.width, art_plan.height, '')
     return replace(frozen, digest=_digest(frozen))
@@ -247,6 +266,7 @@ def compose(ctx: Any, snapshot: RenderSnapshot, job_dir: Path, *, policy: MediaP
     if _digest(replace(snapshot, digest='')) != snapshot.digest:
         raise RenderFailed('render snapshot digest mismatch')
     _validated_assets(root, snapshot.assets)
+    resolve_media_tools(ctx)
     preflight_terminal(ctx, root, policy=policy)
     art_assets = sorted((asset for asset in snapshot.assets if asset.kind == 'art'), key=lambda a: a.path.name)
     if len(art_assets) != snapshot.art_plan.duration_ms * snapshot.fps // 1000:
@@ -257,7 +277,20 @@ def compose(ctx: Any, snapshot: RenderSnapshot, job_dir: Path, *, policy: MediaP
     argv = build_ffmpeg_argv(snapshot.board, snapshot.assets,
                              tuple(a.path for a in art_assets), output)
     _terminal(ctx, argv, policy=policy, timeout=min(600, policy.timeout_s * 5))
-    video = _asset(output, root, 'video', 'video/mp4', duration_ms=snapshot.art_plan.duration_ms)
+    meta = _terminal(ctx, ['ffprobe', '-v', 'error', '-show_entries',
+                           'format=duration:stream=codec_name,codec_type,width,height',
+                           '-of', 'json', str(output)], policy=policy)
+    try:
+        info = json.loads(meta['output'])
+        seconds = float(info['format']['duration'])
+        picture = next(s for s in info['streams'] if s.get('codec_name') == 'h264')
+        dimensions = (picture['width'], picture['height'])
+    except (KeyError, TypeError, ValueError, StopIteration) as exc:
+        raise RenderFailed('encoded video not probeable') from exc
+    if not 0 < seconds <= 90 or dimensions != (snapshot.width, snapshot.height):
+        raise RenderFailed('encoded video duration/dimensions invalid')
+    video = replace(_asset(output, root, 'video', 'video/mp4', duration_ms=round(seconds * 1000)),
+                    width=dimensions[0], height=dimensions[1])
     grabs = []
     for idx, point in enumerate((.18, .50, .82)):
         path = root / f'grab-{idx}.png'
@@ -270,8 +303,11 @@ def compose(ctx: Any, snapshot: RenderSnapshot, job_dir: Path, *, policy: MediaP
                                     'voice': snapshot.board.options.voice,
                                     'board_digest': snapshot.board.digest,
                                     'video_sha256': video.sha256}, sort_keys=True), encoding='utf-8')
-    return RenderBundle(snapshot.board.job_id, snapshot.board.digest, snapshot.render_snapshot_id,
-                        video, tuple(grabs), snapshot.board.x_caption, manifest)
+    bundle = RenderBundle(snapshot.board.job_id, snapshot.board.digest, snapshot.render_snapshot_id,
+                          video, tuple(grabs), snapshot.board.x_caption, manifest)
+    from delivery import validate_delivery
+    validate_delivery(bundle, root)
+    return bundle
 
 
 def probe_video(ctx: Any, bundle: RenderBundle, *, policy: MediaPolicy) -> dict:

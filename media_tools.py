@@ -5,6 +5,7 @@ import hashlib
 import ipaddress
 import json
 import re
+import secrets
 import shlex
 import shutil
 import socket
@@ -15,13 +16,13 @@ from urllib.parse import urlsplit
 
 from PIL import Image, UnidentifiedImageError
 
-from schemas import (ApprovalRequired, Asset, CapabilityUnavailable, MediaPolicy,
+from schemas import (Approval, ApprovalRequired, Asset, CapabilityUnavailable, MediaPolicy,
                      RenderFailed, Storyboard, ToolResult)
 
 _CALL_LOCK = threading.Lock()
 _MEDIA_LIMIT = 24 * 1024 * 1024
 _REQUIRED = {"image_generate": {"prompt", "aspect_ratio"},
-             "text_to_speech": {"text", "output_path"}, "terminal": {"command"}}
+             "text_to_speech": {"text", "output_path"}, "terminal": {"command", "timeout"}}
 
 
 def _host_definitions(ctx: Any) -> dict[str, set[str]]:
@@ -43,6 +44,33 @@ def resolve_media_tools(ctx: Any) -> dict[str, str]:
     return {name: name for name in available}
 
 
+def bind_media_approval(policy: MediaPolicy, board: Storyboard, approval: Approval) -> None:
+    """D calls once with its trusted owner-scoped approval; reuse policy for all stages."""
+    from dataclasses import replace
+    from compositor import _digest
+    if (not policy.network_allowed or not approval.owner.user_id or
+        not approval.disclosure_sha256 or
+        _digest(replace(board, digest='')) != board.digest or
+        approval.storyboard_digest != board.digest or
+        approval.board_revision != board.board_revision):
+        raise ApprovalRequired('media approval is not bound to the exact storyboard')
+    if policy.__dict__.get('_demo_approval') is not None:
+        raise ApprovalRequired('policy already bound; cannot reset job budget')
+    policy.__dict__['_demo_approval'] = approval
+
+
+def _approved(policy: MediaPolicy, board: Storyboard, tool: str) -> None:
+    from dataclasses import replace
+    from compositor import _digest
+    approval = policy.__dict__.get('_demo_approval')
+    if (not policy.network_allowed or approval is None or
+        _digest(replace(board, digest='')) != board.digest or
+        approval.storyboard_digest != board.digest or
+        approval.board_revision != board.board_revision or
+        tool not in approval.allowed_external_tools):
+        raise ApprovalRequired(f'{tool} not approved for exact board')
+
+
 def call_tool(ctx: Any, name: str, arguments: dict, *, policy: MediaPolicy) -> ToolResult:
     """One shared policy instance is the job-wide call ledger; failures spend a call too."""
     if not callable(getattr(ctx, 'dispatch_tool', None)):
@@ -51,6 +79,10 @@ def call_tool(ctx: Any, name: str, arguments: dict, *, policy: MediaPolicy) -> T
         count = policy.__dict__.get('_demo_reel_calls', 0)
         if count >= min(24, policy.max_calls):
             raise CapabilityUnavailable('job tool dispatch budget exhausted')
+        if name != 'terminal':
+            approval = policy.__dict__.get('_demo_approval')
+            if not policy.network_allowed or approval is None or name not in approval.allowed_external_tools:
+                raise ApprovalRequired(f'{name} requires exact media approval')
         policy.__dict__['_demo_reel_calls'] = count + 1
     try:
         raw = ctx.dispatch_tool(name, arguments)
@@ -76,7 +108,7 @@ def call_tool(ctx: Any, name: str, arguments: dict, *, policy: MediaPolicy) -> T
         raise RenderFailed(f'{name} failed (nonzero exit)')
     if success is not True:
         raise RenderFailed(f'{name} result did not confirm success')
-    return ToolResult(True, str(data.get('dispatch_id') or ''), data, None)
+    return ToolResult(True, str(data.get('dispatch_id') or secrets.token_hex(16)), data, None)
 
 
 def _confined(path: Path, root: Path, *, must_exist: bool = True) -> Path:
@@ -120,14 +152,46 @@ def make_title(ctx: Any, board: Storyboard, job_dir: Path, *, policy: MediaPolic
         raise RenderFailed('title destination already exists')
     if not title:
         raise RenderFailed('missing approved title')
+    _approved(policy, board, 'image_generate')
     result = call_tool(ctx, 'image_generate', {
         'prompt': f'Abstract cinematic title background, no text, no logos; {title}',
         'aspect_ratio': 'portrait' if board.options.aspect == '9:16' else 'landscape',
     }, policy=policy)
     generated = result.data.get('image')
-    if not isinstance(generated, str) or not Path(generated).is_absolute() or not Path(generated).is_file():
-        raise CapabilityUnavailable('host image_generate did not supply a shared local raster path')
-    source = Path(generated).resolve(strict=True)
+    if not isinstance(generated, str):
+        raise CapabilityUnavailable('host image_generate returned no raster locator')
+    if generated.startswith('https://'):
+        from urllib.parse import urlsplit
+        from compositor import preflight_terminal
+        parsed = urlsplit(generated)
+        if (not parsed.hostname or parsed.username or parsed.password or
+            parsed.port not in (None, 443) or parsed.fragment or len(generated) > 4096 or
+            'terminal' not in policy.__dict__['_demo_approval'].allowed_external_tools):
+            raise CapabilityUnavailable('generated image URL cannot be fetched safely')
+        try:
+            addresses = socket.getaddrinfo(parsed.hostname, 443, type=socket.SOCK_STREAM)
+            ips = [ipaddress.ip_address(item[4][0]) for item in addresses]
+        except (OSError, ValueError) as exc:
+            raise CapabilityUnavailable('generated image DNS lookup failed') from exc
+        if not ips or any(not ip.is_global for ip in ips):
+            raise CapabilityUnavailable('generated image resolves to private/ambiguous address')
+        ipv4 = next((str(ip) for ip in ips if ip.version == 4), None)
+        if not ipv4:
+            raise CapabilityUnavailable('generated image has no public IPv4 endpoint')
+        preflight_terminal(ctx, root, policy=policy)
+        download = root / 'title-download.png'
+        if download.exists() or download.is_symlink():
+            raise RenderFailed('title download destination already exists')
+        argv = ['curl', '-q', '--fail', '--silent', '--show-error', '--max-time', '45',
+                '--max-redirs', '0', '--proto', '=https', '--noproxy', '*',
+                '--max-filesize', str(_MEDIA_LIMIT), '--resolve', f'{parsed.hostname}:443:{ipv4}',
+                '--output', str(download), generated]
+        call_tool(ctx, 'terminal', {'command': shlex.join(argv), 'timeout': 55}, policy=policy)
+        source = _confined(download, root)
+    elif Path(generated).is_absolute() and Path(generated).is_file():
+        source = Path(generated).resolve(strict=True)
+    else:
+        raise CapabilityUnavailable('host image_generate did not supply a reachable raster')
     target = root / 'title.png'
     if source != target:
         try:
@@ -165,6 +229,7 @@ def make_speech(ctx: Any, board: Storyboard, job_dir: Path, *, policy: MediaPoli
         raise RenderFailed('voice requires 1..6 approved scenes')
     if any(not re.fullmatch(r'[a-zA-Z0-9_-]{1,64}', scene.scene_id) for scene in board.scenes):
         raise RenderFailed('invalid scene id')
+    _approved(policy, board, 'text_to_speech')
     speech = []
     for scene in board.scenes:
         if not scene.narration.strip():
@@ -182,6 +247,9 @@ def make_speech(ctx: Any, board: Storyboard, job_dir: Path, *, policy: MediaPoli
         duration = _audio_duration_ms(ctx, path, policy=policy)
         if duration > scene.end_ms - scene.start_ms:
             raise RenderFailed('TTS exceeds approved scene; revise narration and reapprove')
+        magic = path.open('rb').read(3)
+        if not (magic.startswith(b'ID3') or (len(magic) > 1 and magic[0] == 255 and magic[1] & 224 == 224)):
+            raise RenderFailed('TTS audio not MP3; unsupported host output format')
         speech.append(_asset(path, root, 'speech', 'audio/mpeg',
                              scene_id=scene.scene_id, duration_ms=duration,
                              dispatch_id=result.dispatch_id))

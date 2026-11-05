@@ -40,8 +40,11 @@ class DeliveryTests(unittest.TestCase):
             validate_delivery(replace(self.bundle, mp4=replace(self.bundle.mp4, path=outside)), self.root)
 
     def test_caption_control_directives_and_missing_frame_rejected(self):
-        with self.assertRaises(RenderFailed):
-            format_delivery(replace(self.bundle, x_caption='Oops MEDIA:/tmp/other.mp4 @NousResearch'))
+        for caption in ('Oops MEDIA:/tmp/other.mp4 @NousResearch',
+                        'Oops(MEDIA:/etc/passwd @NousResearch',
+                        'OopsxMEDIA:/etc/passwd @NousResearch'):
+            with self.assertRaises(RenderFailed):
+                format_delivery(replace(self.bundle, x_caption=caption))
         self.frame_paths[0].unlink()
         with self.assertRaises(RenderFailed):
             validate_delivery(self.bundle, self.root)
