@@ -287,7 +287,9 @@ def compose(ctx: Any, snapshot: RenderSnapshot, job_dir: Path, *, policy: MediaP
         dimensions = (picture['width'], picture['height'])
     except (KeyError, TypeError, ValueError, StopIteration) as exc:
         raise RenderFailed('encoded video not probeable') from exc
-    if not 0 < seconds <= 90 or dimensions != (snapshot.width, snapshot.height):
+    if (not 0 < seconds <= 90 or
+        abs(seconds - snapshot.board.options.duration_s) > .2 or
+        dimensions != (snapshot.width, snapshot.height)):
         raise RenderFailed('encoded video duration/dimensions invalid')
     video = replace(_asset(output, root, 'video', 'video/mp4', duration_ms=round(seconds * 1000)),
                     width=dimensions[0], height=dimensions[1])

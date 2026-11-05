@@ -158,6 +158,7 @@ class CompositorTests(unittest.TestCase):
         self.assertTrue(bundle.mp4.path.exists())
         metadata = probe_video(host, bundle, policy=self.policy)
         self.assertGreater(float(metadata['format']['duration']), 0)
+        self.assertAlmostEqual(float(metadata['format']['duration']), board.options.duration_s, delta=.2)
         self.assertLessEqual(float(metadata['format']['duration']), 90)
         self.assertEqual(len(bundle.frames), 3)
         self.assertTrue(all(a.path.exists() for a in bundle.frames))
