@@ -13,9 +13,16 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
-from media_tools import _asset, _confined, call_tool, resolve_media_tools
-from schemas import (Approval, ArtPlan, Asset, CapabilityUnavailable, MediaPolicy,
-                     RenderBundle, RenderFailed, RenderSnapshot, SessionSnapshot, Storyboard)
+try:
+    from .media_tools import _asset, _confined, call_tool, resolve_media_tools
+except ImportError:
+    from media_tools import _asset, _confined, call_tool, resolve_media_tools
+try:
+    from .schemas import (Approval, ArtPlan, Asset, CapabilityUnavailable, MediaPolicy,
+                         RenderBundle, RenderFailed, RenderSnapshot, SessionSnapshot, Storyboard)
+except ImportError:
+    from schemas import (Approval, ArtPlan, Asset, CapabilityUnavailable, MediaPolicy,
+                         RenderBundle, RenderFailed, RenderSnapshot, SessionSnapshot, Storyboard)
 
 
 def _canonical(value: Any) -> Any:
@@ -307,7 +314,10 @@ def compose(ctx: Any, snapshot: RenderSnapshot, job_dir: Path, *, policy: MediaP
                                     'video_sha256': video.sha256}, sort_keys=True), encoding='utf-8')
     bundle = RenderBundle(snapshot.board.job_id, snapshot.board.digest, snapshot.render_snapshot_id,
                           video, tuple(grabs), snapshot.board.x_caption, manifest)
-    from delivery import validate_delivery
+    try:
+        from .delivery import validate_delivery
+    except ImportError:
+        from delivery import validate_delivery
     validate_delivery(bundle, root)
     return bundle
 

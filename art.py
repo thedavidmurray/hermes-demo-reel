@@ -17,7 +17,10 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from schemas import ArtPlan, Event, SessionSnapshot, Storyboard
+try:
+    from .schemas import ArtPlan, Event, SessionSnapshot, Storyboard
+except ImportError:
+    from schemas import ArtPlan, Event, SessionSnapshot, Storyboard
 
 # ArtPlan has no timeline field: derive compressed event births from the frozen
 # ordered evidence at frame-render time; never persist inferred durations.

@@ -5,7 +5,10 @@ import hashlib
 import re
 from pathlib import Path
 
-from schemas import Asset, RenderBundle, RenderFailed
+try:
+    from .schemas import Asset, RenderBundle, RenderFailed
+except ImportError:
+    from schemas import Asset, RenderBundle, RenderFailed
 
 
 def _caption(caption: str) -> None:

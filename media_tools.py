@@ -16,8 +16,12 @@ from urllib.parse import urlsplit
 
 from PIL import Image, UnidentifiedImageError
 
-from schemas import (Approval, ApprovalRequired, Asset, CapabilityUnavailable, MediaPolicy,
-                     RenderFailed, Storyboard, ToolResult)
+try:
+    from .schemas import (Approval, ApprovalRequired, Asset, CapabilityUnavailable, MediaPolicy,
+                         RenderFailed, Storyboard, ToolResult)
+except ImportError:
+    from schemas import (Approval, ApprovalRequired, Asset, CapabilityUnavailable, MediaPolicy,
+                         RenderFailed, Storyboard, ToolResult)
 
 _CALL_LOCK = threading.Lock()
 _MEDIA_LIMIT = 24 * 1024 * 1024
@@ -47,7 +51,10 @@ def resolve_media_tools(ctx: Any) -> dict[str, str]:
 def bind_media_approval(policy: MediaPolicy, board: Storyboard, approval: Approval) -> None:
     """D calls once with its trusted owner-scoped approval; reuse policy for all stages."""
     from dataclasses import replace
-    from compositor import _digest
+    try:
+        from .compositor import _digest
+    except ImportError:
+        from compositor import _digest
     if (not policy.network_allowed or not approval.owner.user_id or
         not approval.disclosure_sha256 or
         _digest(replace(board, digest='')) != board.digest or
@@ -61,7 +68,10 @@ def bind_media_approval(policy: MediaPolicy, board: Storyboard, approval: Approv
 
 def _approved(policy: MediaPolicy, board: Storyboard, tool: str) -> None:
     from dataclasses import replace
-    from compositor import _digest
+    try:
+        from .compositor import _digest
+    except ImportError:
+        from compositor import _digest
     approval = policy.__dict__.get('_demo_approval')
     if (not policy.network_allowed or approval is None or
         _digest(replace(board, digest='')) != board.digest or
@@ -162,7 +172,10 @@ def make_title(ctx: Any, board: Storyboard, job_dir: Path, *, policy: MediaPolic
         raise CapabilityUnavailable('host image_generate returned no raster locator')
     if generated.startswith('https://'):
         from urllib.parse import urlsplit
-        from compositor import preflight_terminal
+        try:
+            from .compositor import preflight_terminal
+        except ImportError:
+            from compositor import preflight_terminal
         parsed = urlsplit(generated)
         if (not parsed.hostname or parsed.username or parsed.password or
             parsed.port not in (None, 443) or parsed.fragment or len(generated) > 4096 or
@@ -205,7 +218,10 @@ def make_title(ctx: Any, board: Storyboard, job_dir: Path, *, policy: MediaPolic
 
 
 def _audio_duration_ms(ctx: Any, path: Path, *, policy: MediaPolicy) -> int:
-    from compositor import preflight_terminal
+    try:
+        from .compositor import preflight_terminal
+    except ImportError:
+        from compositor import preflight_terminal
     preflight_terminal(ctx, path.parent, policy=policy)
     argv = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'json', str(path)]
     result = call_tool(ctx, 'terminal', {'command': shlex.join(argv), 'timeout': policy.timeout_s}, policy=policy)

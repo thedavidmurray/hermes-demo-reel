@@ -1,0 +1,9 @@
+name: demo-reel
+version: 0.1.0
+description: Turn approved Hermes session evidence into a narrated demo reel of at most 90 seconds
+author: David Murray
+provides_tools:
+  - demo_reply
+provides_hooks: []
+python_dependencies:
+  - "Pillow>=10.4,<13"
