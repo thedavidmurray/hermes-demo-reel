@@ -294,6 +294,15 @@ def _handle(ctx,raw_args,session_id='',**kwargs) -> CommandReply:
             current = store.load_job(owner,job.job_id)
             job = store.save_job(replace(current,board=board,error_code=None),expected_job_version=current.job_version)
         except (ApprovalRequired,CapabilityUnavailable,ContractError) as exc:
+            # Never log provider text; report only a bounded contract code/class.
+            import logging
+            import re
+            code = str(exc)
+            if not re.fullmatch(r'[A-Z][A-Z0-9_]{0,79}', code):
+                code = 'REDACTED_ERROR'
+            logging.getLogger(__name__).warning(
+                'demo-reel storyboard failed: step=build_storyboard error_class=%s code=%s',
+                type(exc).__name__, code)
             current = store.load_job(owner,job.job_id)
             if current.error_code == 'GENERATION_UNKNOWN':
                 if isinstance(exc,ApprovalRequired):

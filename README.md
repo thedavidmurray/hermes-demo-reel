@@ -1,6 +1,6 @@
 # Hermes Demo Reel
 
-**Integration preview — not a verified release.** Turns explicitly selected,
+**v0 release candidate — real CLI media verified, independent review pending.** Turns explicitly selected,
 read-only Hermes session evidence into an approved storyboard and a ≤90-second
 demo reel. No X posting. Receipts remains the main hackathon entry.
 
@@ -72,24 +72,48 @@ preview. Cron/noninteractive actions fail immediately instead of asking for inpu
 
 - Browser screenshots, music and templates remain the Nov 9 v1 phase; requests
   for screenshots/music fail closed in v0. No browser capture is claimed yet.
-- Native Desktop/CLI playable-media acknowledgement is not implemented. These
-  surfaces cannot claim delivery; actual originating-chat transport remains a
-  release gate. Discord/Telegram ACK checks exist but are not live-verified.
+- **Live Discord/Telegram transport not yet verified end-to-end; CLI path verified with real providers.**
+  Desktop native media acknowledgement is not implemented. There was no live-chat
+  release test; that requires an explicitly authorized destination. The ordinary
+  Kanban artifact notifier is not a plugin transport test.
 - Locality currently uses the installed terminal's private backend resolver;
-  source identity uses installed gateway `SessionSource`. Doctor warns about
-  these internal API imports. This compatibility debt is not a clean doctor claim.
-- Pinned disposable GitHub installation of preview
-  `1ea78033b05e67c6302db27d3191d010b6f50ef9` and dependency-install validation
-  succeeded on Nov 4 after storage was restored. These checks do not establish
-  end-to-end outcome-probe, provider narration, or transport readiness.
-  Synthetic compositor fixtures are not real-session narration proof.
-- Real approved Hive title/TTS, a ≤90-second audible MP4, three PNG frame grabs,
-  actual same-chat delivery receipt and independent integration review are still
-  required before release. No catalog PR has been authorized or opened.
+  source identity uses installed gateway `SessionSource`. Validation warns about
+  these internal API imports: compatibility debt, not a warning-free catalog claim.
+- On Nov 5 the authorized Hive CLI run rendered a real 30.0s H.264/AAC MP4
+  using host storyboard LLM, generated title and three TTS calls. The outcome
+  probe fully decoded it and measured -24.9 dB mean audio level; three PNG grabs
+  were produced. This is technical verification footage, **not** the showcase.
+- FAL returned HTTP401 on a separate title attempt; that job remains durably
+  UNKNOWN and was not retried. A new approved job used the operator-authorized
+  `image_gen.provider: openai-codex`, `use_gateway: true` configuration.
+- Independent Critic approval and the `v0.1.0` tag remain pending. The showcase
+  separately requires thesis → beat-map → animatic → council → final, with no
+  single-render quality claim. No catalog PR has been authorized or opened.
 - Validation status must include its actual output: an exit zero alone is not
   proof that `--install-deps` succeeded. The installed Hermes launcher can also
   auto-complete an interrupted source update before executing a command; a
   timed-out launch is not a doctor result. Do not repair live core to pass gates.
+
+## Authorized local operator workflow
+
+The local CLI uses the installed host context, not a direct provider client.
+Never run paid stages as standalone `python cli.py`. Read each generated
+redaction/storyboard file before supplying its exact consent hash:
+
+```sh
+hermes demo-reel interview --operator YOUR_NAME --answers examples/v0-answers.json \
+  --db /absolute/path/to/state.db --session-id YOUR_SESSION --consent-source
+hermes demo-reel draft --operator YOUR_NAME --job JOB --consent-generation HASH
+hermes demo-reel render --operator YOUR_NAME --job JOB \
+  --approve-board BOARD_HASH --approve-disclosure DISCLOSURE_HASH
+python scripts/probe_outcome.py --mp4 /path/returned/by/render.mp4
+```
+
+Use a disposable `HERMES_HOME` for verification. The answers file deliberately
+contains no source database, session identifiers or consent defaults. Missing
+inputs exit 2 with `NEEDS_INPUT`, including in unattended runs. A CLI operator
+assertion is local authority, not evidence of a human chat approval. `render`
+returns the MP4, PNG and caption paths; it does not send a live-chat message.
 
 ## Development / unattended checks
 

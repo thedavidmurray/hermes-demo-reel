@@ -117,7 +117,12 @@ def run_operator(args, *, ctx=None):
         if args.action == 'draft':
             return _emit('OK',job_id=job.job_id,state=job.state,review_dir=str(review),
                          board_digest=job.board.digest,disclosure_sha256=store.digest(media),canary_scan='PASS')
-        job = command('for '+job.job_id+' approve '+args.approve_board+' '+args.approve_disclosure)
+        if job.state == 'APPROVED':
+            if (not job.approval or job.approval.storyboard_digest != args.approve_board or
+                    job.approval.disclosure_sha256 != args.approve_disclosure):
+                raise ValueError('APPROVAL_SCOPE_MISMATCH')
+        else:
+            job = command('for '+job.job_id+' approve '+args.approve_board+' '+args.approve_disclosure)
         try:
             from .pipeline import render_job
         except ImportError:
@@ -127,4 +132,7 @@ def run_operator(args, *, ctx=None):
                      x_caption=bundle.x_caption,live_chat_verified=False)
     except (ContractError,ValueError,TypeError,OSError,KeyError,ImportError) as exc:
         # Return only the exception class; provider messages can expose private paths.
-        return _emit('BLOCKED_CAPABILITY',error_type=type(exc).__name__,reason='Host unavailable, invalid source/settings or unmatched/expired approval. No automatic provider retry.')
+        code = str(exc)
+        if not re.fullmatch(r'[A-Z][A-Z0-9_]{0,79}', code):
+            code = 'REDACTED_ERROR'
+        return _emit('BLOCKED_CAPABILITY',error_type=type(exc).__name__,error_code=code,reason='Host unavailable, invalid source/settings or unmatched/expired approval. No automatic provider retry.')

@@ -25,6 +25,21 @@ def run_cli(args, *, ctx=None):
             from operator_cli import run_operator
         return run_operator(args,ctx=ctx)
     capabilities = {name:bool(shutil.which(name)) for name in ('ffmpeg','ffprobe')}
+    if ctx is not None:
+        try:
+            from .media_tools import resolve_media_tools
+        except ImportError:
+            from media_tools import resolve_media_tools
+        try:
+            resolve_media_tools(ctx)
+        except Exception as exc:
+            import re
+            code = str(exc)
+            if not re.fullmatch(r'[A-Z][A-Z0-9_]{0,79}', code):
+                code = 'REDACTED_ERROR'
+            print(json.dumps({'code':'BLOCKED_CAPABILITY','error_type':type(exc).__name__,
+                              'error_code':code,'providers':'not called'}))
+            return 3
     print(json.dumps({'code':'OK' if all(capabilities.values()) else 'BLOCKED_CAPABILITY',
                       'capabilities':capabilities,'providers':'not called','live_release_verified':False}))
     return 0 if all(capabilities.values()) else 3

@@ -32,7 +32,10 @@ _REQUIRED = {"image_generate": {"prompt", "aspect_ratio"},
 def _host_definitions(ctx: Any) -> dict[str, set[str]]:
     """Read installed host registry schemas; never guess a tool's argument contract."""
     try:
-        from tools.registry import registry
+        from tools.registry import registry, discover_builtin_tools
+        # Plugin CLI startup does not import model_tools. Ask the host's own
+        # discovery routine to register built-ins; dispatch still remains host-owned.
+        discover_builtin_tools()
         definitions = registry.get_definitions(set(_REQUIRED) | {"browser_navigate", "browser_screenshot"}, quiet=True)
         return {item['function']['name']: set(item['function']['parameters']['properties'])
                 for item in definitions}
@@ -44,7 +47,7 @@ def resolve_media_tools(ctx: Any) -> dict[str, str]:
     available = _host_definitions(ctx)
     for name, arguments in _REQUIRED.items():
         if not arguments <= available.get(name, set()):
-            raise CapabilityUnavailable(f'required host tool/schema unavailable: {name}')
+            raise CapabilityUnavailable('HOST_TOOL_SCHEMA_UNAVAILABLE_' + name.upper())
     return {name: name for name in available}
 
 

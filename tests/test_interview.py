@@ -85,6 +85,14 @@ class Interviews(unittest.TestCase):
             disclosure_sha256=store.digest(disclosure),allowed_external_tools=('image_generate','terminal'),
             approved_urls=(),now=NOW)
 
+    def test_whole_json_code_fence_is_validated_not_executed(self):
+        job = self.consent(self.ready())
+        snap = store.load_snapshot(OWNER, job.evidence_snapshot_id)
+        data = {'scenes':[{'fact_ids':[0], 'visual':'art'}], 'x_caption':sb.CAPTIONS[0]}
+        self.ctx.llm.complete = lambda **kw: SimpleNamespace(text='```json\n'+json.dumps(data)+'\n```')
+        board = sb.build_storyboard(self.ctx,snap,job.options,job.consent,job_id=job.job_id)
+        self.assertEqual(len(board.scenes),1)
+
     def test_draft_restart_missing_fields_voice_false(self):
         job = iv.start_interview(OWNER,now=NOW)
         self.assertEqual(iv.validate_interview(job.draft),('source','audience','duration_s','aspect','tone','voice'))

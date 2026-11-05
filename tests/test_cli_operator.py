@@ -65,6 +65,24 @@ class OperatorCliTests(unittest.TestCase):
             with self.assertRaises(ValueError): validate_volume('mean_volume: '+level+' dB')
         self.assertEqual(validate_volume('mean_volume: -20.5 dB'),-20.5)
 
+    def test_check_reports_bounded_schema_failure_without_dispatch(self):
+        from schemas import CapabilityUnavailable
+        out = io.StringIO()
+        with patch('media_tools.resolve_media_tools', side_effect=CapabilityUnavailable('HOST_TOOL_SCHEMA_UNAVAILABLE_IMAGE_GENERATE')):
+            with redirect_stdout(out):
+                code = run_cli(args('check'), ctx=SimpleNamespace())
+        self.assertEqual(code, 3)
+        self.assertEqual(json.loads(out.getvalue())['error_code'], 'HOST_TOOL_SCHEMA_UNAVAILABLE_IMAGE_GENERATE')
+
+    def test_check_redacts_unbounded_exception_text(self):
+        out = io.StringIO()
+        with patch('media_tools.resolve_media_tools', side_effect=ValueError('/private/token-secret')):
+            with redirect_stdout(out):
+                code = run_cli(args('check'), ctx=SimpleNamespace())
+        self.assertEqual(code, 3)
+        self.assertNotIn('token-secret', out.getvalue())
+        self.assertEqual(json.loads(out.getvalue())['error_code'], 'REDACTED_ERROR')
+
     def test_standalone_paid_stage_requires_host_context(self):
         self.assertEqual(run_cli(args('draft','--operator','hive','--job','j','--consent-generation','x')),3)
 
@@ -129,6 +147,23 @@ class OperatorFlowTests(unittest.TestCase):
             code,_ = self.run_command('render','--job',expired.job_id,'--approve-board',job.board.digest,'--approve-disclosure',disclosure)
             self.assertEqual(code,3)
             render.assert_not_called()
+
+    def test_approved_preflight_resume_requires_identical_hashes(self):
+        from schemas import CapabilityUnavailable
+        job, _ = self.helper.boarded()
+        job = self.helper.approve(job)
+        assert job.approval is not None
+        with patch('pipeline.render_job', side_effect=CapabilityUnavailable('TEST_PREFLIGHT')) as render:
+            code, _ = self.run_command('render','--job',job.job_id,
+                '--approve-board','wrong','--approve-disclosure',job.approval.disclosure_sha256)
+            self.assertEqual(code,3)
+            render.assert_not_called()
+            code, result = self.run_command('render','--job',job.job_id,
+                '--approve-board',job.approval.storyboard_digest,
+                '--approve-disclosure',job.approval.disclosure_sha256)
+            self.assertEqual(code,3)
+            self.assertEqual(result['error_code'],'TEST_PREFLIGHT')
+            render.assert_called_once()
 
     def test_cross_owner_job_never_dispatches(self):
         job = self.helper.ready()
