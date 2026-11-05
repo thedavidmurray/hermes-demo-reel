@@ -1,0 +1,8 @@
+.probe/
+.autoreason/
+__pycache__/
+*.pyc
+*.db
+*.db-*
+.env*
+output/
