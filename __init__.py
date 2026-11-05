@@ -42,4 +42,5 @@ def register(ctx):
     ctx.register_tool('demo_reply','demo-reel',{'name':'demo_reply','description':
         'Explain how to continue the demo interview. Never supplies user consent or performs actions.',
         'parameters':{'type':'object','properties':{'answer':{'type':'string'}},'additionalProperties':False}},reply_tool)
-    ctx.register_cli_command('demo-reel','Demo reel diagnostics (unattended fails closed)',setup_cli,run_cli)
+    ctx.register_cli_command('demo-reel','Demo reel diagnostics and explicit operator CLI',setup_cli,
+                             lambda args: run_cli(args,ctx=ctx))

@@ -5,13 +5,25 @@ import shutil
 
 
 def setup_cli(parser):
-    parser.add_argument('action',choices=('interview','check','render'),nargs='?',default='check')
+    parser.add_argument('action',choices=('interview','check','draft','render'),nargs='?',default='check')
+    parser.add_argument('--answers',type=str)
+    parser.add_argument('--db',type=str)
+    parser.add_argument('--session-id',action='append',default=[])
+    parser.add_argument('--operator',type=str)
+    parser.add_argument('--consent-source',action='store_true')
+    parser.add_argument('--job',type=str)
+    parser.add_argument('--consent-generation',type=str)
+    parser.add_argument('--approve-board',type=str)
+    parser.add_argument('--approve-disclosure',type=str)
 
 
-def run_cli(args):
+def run_cli(args, *, ctx=None):
     if args.action != 'check':
-        print(json.dumps({'code':'NEEDS_INPUT','exit_code':2,'reason':'Use /demo in an interactive Hermes chat; CLI cannot attest chat owner or approval.'}))
-        return 2
+        try:
+            from .operator_cli import run_operator
+        except ImportError:
+            from operator_cli import run_operator
+        return run_operator(args,ctx=ctx)
     capabilities = {name:bool(shutil.which(name)) for name in ('ffmpeg','ffprobe')}
     print(json.dumps({'code':'OK' if all(capabilities.values()) else 'BLOCKED_CAPABILITY',
                       'capabilities':capabilities,'providers':'not called','live_release_verified':False}))
