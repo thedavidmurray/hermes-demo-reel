@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -66,38 +67,36 @@ def _token(seed: int, event: Event, index: int) -> bytes:
 
 def plan_art(snapshot: SessionSnapshot, board: Storyboard, *, width: int, height: int, fps: int = 24) -> ArtPlan:
     """Bind art to the approved evidence fingerprint and exact film geometry."""
-    if (width, height) not in ((720, 1280), (1280, 720)) or type(fps) is not int or fps != 24:
-        raise ValueError("art requires 720x1280 or 1280x720 at 24 fps")
+    expected = {"9:16": (720, 1280), "16:9": (1280, 720)}.get(board.options.aspect)
+    if expected is None or (width, height) != expected or type(width) is not int or type(height) is not int or type(fps) is not int or fps != 24:
+        raise ValueError("art geometry must match board aspect at 24 fps")
     if snapshot.schema_version != 1 or board.schema_version != 1:
         raise ValueError("unsupported evidence/board version")
     if board.evidence_snapshot_id != snapshot.snapshot_id or board.source_sha256 != snapshot.source_sha256:
         raise ValueError("storyboard evidence mismatch")
-    if not isinstance(snapshot.source_sha256, str) or len(snapshot.source_sha256) != 64:
+    if not isinstance(snapshot.source_sha256, str) or re.fullmatch(r"[0-9a-f]{64}", snapshot.source_sha256) is None:
         raise ValueError("invalid source fingerprint")
-    try:
-        source = bytes.fromhex(snapshot.source_sha256)
-    except ValueError as exc:
-        raise ValueError("invalid source fingerprint") from exc
+    source = bytes.fromhex(snapshot.source_sha256)
     duration_s = board.options.duration_s
     if type(duration_s) is not int or not 15 <= duration_s <= 90:
         raise ValueError("art duration must be 15..90 seconds")
     event_ids = tuple(event.event_id for event in snapshot.events)
-    if len(event_ids) != len(set(event_ids)):
-        raise ValueError("duplicate event ids")
+    if len(event_ids) > 2000 or len(event_ids) != len(set(event_ids)):
+        raise ValueError("too many events or duplicate event ids")
     seed = int.from_bytes(hashlib.sha256(source + b":demo-reel-art-v1").digest()[:8], "big")
     return ArtPlan(seed, snapshot.source_sha256, event_ids, width, height, fps, duration_s * 1000)
 
 
 def _validate_frame(plan: ArtPlan, events: tuple[Event, ...], frame_index: int) -> int:
-    if (plan.width, plan.height) not in ((720, 1280), (1280, 720)) or plan.fps != 24:
+    if type(plan.width) is not int or type(plan.height) is not int or (plan.width, plan.height) not in ((720, 1280), (1280, 720)) or type(plan.fps) is not int or plan.fps != 24:
         raise ValueError("invalid art geometry")
     if type(plan.duration_ms) is not int or plan.duration_ms < 15000 or plan.duration_ms > 90000:
         raise ValueError("invalid art duration")
     frame_count = plan.duration_ms * plan.fps // 1000
     if type(frame_index) is not int or not 0 <= frame_index < frame_count:
         raise ValueError("frame index out of bounds")
-    if len(events) != len(plan.event_ids) or set(e.event_id for e in events) != set(plan.event_ids):
-        raise ValueError("event identity mismatch")
+    if tuple(e.event_id for e in events) != plan.event_ids:
+        raise ValueError("event order/identity mismatch")
     return frame_count
 
 
@@ -127,19 +126,25 @@ def render_art_frame(plan: ArtPlan, events: tuple[Event, ...], frame_index: int)
     strip_left, strip_width = int(w * .12), int(w * .76)
     for i, event in enumerate(events):
         x = strip_left + int(strip_width * (i + .5) / len(events))
-        color = (246, 93, 104) if event.status == "error" else _PALETTE[_category(event.tool)]
+        color = ((246, 93, 104) if event.status == "error" else
+                 (112, 120, 139) if event.status == "unknown" else _PALETTE[_category(event.tool)])
         draw.line((x, int(h*.89), x, int(h*(.91 if event.status == "error" else .905))),
                   fill=(*color, 255), width=max(1, min(5, strip_width // max(1, len(events)))))
 
-    # Only active/recent particles are drawn, keeping per-frame work bounded by
-    # evidence count, not elapsed transcript length. Frequency is actual calls.
+    # Bounded evidence count (<=2000) and 8-second particle lifetimes limit
+    # drawing on long films; compressed births and timeline markers persist.
     density: dict[str, int] = {}
     for i, (event, born) in enumerate(zip(events, births)):
         if born > now_ms:
             continue
         category = _category(event.tool)
         density[category] = density.get(category, 0) + 1
+        color = _PALETTE[category]
+        mark_x = left + int((right-left) * born / plan.duration_ms)
+        draw.line((mark_x, rail_y-9, mark_x, rail_y+9), fill=(*color, 255), width=2)
         age = now_ms - born
+        if age > 8000:
+            continue
         token = _token(plan.seed, event, i)
         orbit = small * (.11 + token[0] / 255 * .18)
         angle = (token[1] / 255 * math.tau + age / 1300 * (1 if i % 2 else -1))
@@ -159,8 +164,6 @@ def render_art_frame(plan: ArtPlan, events: tuple[Event, ...], frame_index: int)
             radius = size + 5 + pulse
             draw.ellipse((int(x-radius), int(y-radius), int(x+radius), int(y+radius)),
                          outline=(249, 83, 105, 255), width=3)
-        mark_x = left + int((right-left) * born / plan.duration_ms)
-        draw.line((mark_x, rail_y-9, mark_x, rail_y+9), fill=(*color, 255), width=2)
     cursor = max(left, min(right, progress))
     draw.ellipse((cursor-7, rail_y-7, cursor+7, rail_y+7), fill=(224, 253, 238, 255))
     return image
@@ -180,7 +183,14 @@ def render_art_sequence(plan: ArtPlan, events: tuple[Event, ...], output_dir: Pa
         if path.exists():
             raise FileExistsError(str(path))
         image = render_art_frame(plan, events, index)
-        image.save(path, format="PNG", optimize=False)
-        image.close()
+        try:
+            with path.open("xb") as stream:
+                try:
+                    image.save(stream, format="PNG", optimize=False)
+                except Exception:
+                    path.unlink()
+                    raise
+        finally:
+            image.close()
         files.append(path)
     return tuple(files)
