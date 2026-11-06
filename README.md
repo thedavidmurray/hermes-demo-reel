@@ -24,8 +24,12 @@ Hermes core/configuration. Remote/unknown terminal backends are rejected.
    DB and session IDs, audience, 15–90-second duration, portrait/landscape, tone,
    and voice. Ambiguous source selection is rejected, never guessed.
 2. Review the source/redaction disclosure and use the exact generation-consent
-   command displayed by the interview. Only redacted structured evidence goes
-   to the storyboard LLM, not arbitrary historical transcript prose.
+   command displayed by the interview. New captures use v2: bounded, best-effort
+   redacted excerpts of the user ask and recorded tool inputs/outputs are sent
+   to the storyboard LLM. Inspect the **exact excerpt catalog** before consent;
+   this is more source content than legacy v1 metadata, not a privacy guarantee.
+   Historical assistant reasoning is not captured, and historical file paths
+   are never followed to fetch more data.
 3. Review the storyboard, captions, narration, and tool disclosure. Use the
    displayed approval hashes, or edit before approving.
 4. `/demo render JOB` renders the approved board. It creates session-driven art,
@@ -43,9 +47,12 @@ preview. Cron/noninteractive actions fail immediately instead of asking for inpu
 ## Rule-13 disclosure: data, tools, network and cost
 
 - **Reads:** only explicitly selected session rows from the provided `state.db`,
-  through read-only SQLite, including structured tool-event metadata. Does not
+  through read-only SQLite, including user requests, tool-event metadata and
+  bounded tool inputs/outputs (`write_file`, `patch`, `skill_manage` patch text,
+  terminal commands and recorded tool results). Does not fetch historical paths,
   scan other profiles or write the source database. Redaction is conservative,
-  not a guarantee against all private information: inspect the disclosed board.
+  not a guarantee against all private information: inspect the full excerpt
+  catalog before LLM consent and the exact board before media approval.
 - **Stores:** owner-scoped interviews, immutable redacted snapshots, consents,
   storyboard approvals and durable render/send claims in Hermes plugin storage.
   Generated assets/manifests remain in owner/job-scoped plugin data directories.
@@ -79,10 +86,17 @@ preview. Cron/noninteractive actions fail immediately instead of asking for inpu
 - Locality currently uses the installed terminal's private backend resolver;
   source identity uses installed gateway `SessionSource`. Validation warns about
   these internal API imports: compatibility debt, not a warning-free catalog claim.
-- On Nov 5 the authorized Hive CLI run rendered a real 30.0s H.264/AAC MP4
-  using host storyboard LLM, generated title and three TTS calls. The outcome
-  probe fully decoded it and measured -24.9 dB mean audio level; three PNG grabs
-  were produced. This is technical verification footage, **not** the showcase.
+- The original Nov 5 CLI reel failed output-quality review despite technical
+  validation. Its replacement uses five LLM-scripted scenes (ask → three work
+  moments → result), frozen source panels, 3-second caption beats and an outcome
+  end card, with abstract art only behind the content. It is a real 30.0s
+  1280×720 H.264/AAC render using host title generation and **five TTS calls**;
+  the full-decode probe measures -23.2 dB mean audio level. Three PNG grabs were
+  visually inspected. **Independent narrative/privacy/media approval is still
+  required; passing an encode probe is not a taste or showcase endorsement.**
+  Citations establish provenance, not semantic truth; approval must check that
+  the visible excerpt actually supports each claim. Panels show excerpts, not
+  live recordings. Legacy schema-v1 jobs remain readable.
 - FAL returned HTTP401 on a separate title attempt; that job remains durably
   UNKNOWN and was not retried. A new approved job used the operator-authorized
   `image_gen.provider: openai-codex`, `use_gateway: true` configuration.

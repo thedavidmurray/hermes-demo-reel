@@ -220,7 +220,7 @@ def save_job(job: Job, *, expected_job_version: int) -> Job:
 def persist_snapshot(owner: Owner, snapshot: SessionSnapshot) -> str:
     key = _key(owner)
     _id(snapshot.snapshot_id)
-    if snapshot.schema_version != 1 or not re.fullmatch('[0-9a-f]{64}',snapshot.source_sha256):
+    if snapshot.schema_version not in (1,2) or not re.fullmatch('[0-9a-f]{64}',snapshot.source_sha256):
         raise ContractError('INVALID_EVIDENCE_SCHEMA')
     decode(SessionSnapshot,canonical(snapshot))
     conn = open_store()
@@ -241,7 +241,7 @@ def load_snapshot(owner: Owner, snapshot_id: str) -> SessionSnapshot:
             (_id(snapshot_id),_key(owner))).fetchone()
         if not row: raise ContractError('EVIDENCE_NOT_FOUND')
         snap = decode(SessionSnapshot,row[0])
-        if snap.schema_version != 1 or snap.snapshot_id != snapshot_id or digest(snap) != row[1]:
+        if snap.schema_version not in (1,2) or snap.snapshot_id != snapshot_id or digest(snap) != row[1]:
             raise ContractError('CORRUPT_EVIDENCE')
         return snap
     finally: conn.close()

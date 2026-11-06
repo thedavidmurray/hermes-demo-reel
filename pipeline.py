@@ -66,6 +66,12 @@ def render_job(ctx, owner: Owner, job_id: str, *, policy: MediaPolicy) -> Render
     width, height = (720,1280) if job.board.options.aspect == '9:16' else (1280,720)
     plan = plan_art(snapshot,job.board,width=width,height=height)
     frames = render_art_sequence(plan,snapshot.events,root/'art')
+    if job.board.schema_version==2:
+        try:
+            from .narrative_visuals import paint_narrative_frames
+        except ImportError:
+            from narrative_visuals import paint_narrative_frames
+        paint_narrative_frames(frames,snapshot,job.board,title.path)
     art = tuple(_asset(path,root,'art','image/png') for path in frames)
     frozen = freeze_render(snapshot,job.board,job.approval,(title,)+tuple(speech)+art,plan)
     (root/'frozen.json').write_text(store.canonical(frozen),encoding='utf-8')

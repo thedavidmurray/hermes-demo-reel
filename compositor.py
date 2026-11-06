@@ -96,7 +96,7 @@ def _validated_assets(root: Path | None, assets: tuple[Asset, ...]) -> None:
 
 def freeze_render(snapshot: SessionSnapshot, board: Storyboard, approval: Approval,
                   assets: tuple[Asset, ...], art_plan: ArtPlan) -> RenderSnapshot:
-    if (board.schema_version != 1 or snapshot.schema_version != 1 or
+    if (board.schema_version not in (1,2) or board.schema_version != snapshot.schema_version or
         board.digest != approval.storyboard_digest or _digest(replace(board, digest='')) != board.digest or
         board.board_revision != approval.board_revision or
         board.evidence_snapshot_id != snapshot.snapshot_id or
@@ -173,6 +173,16 @@ def _timestamp(ms: int) -> str:
 
 def _write_captions(board: Storyboard, path: Path) -> None:
     content = []
+    if board.schema_version==2:
+        try:
+            from .narrative import caption_beats
+        except ImportError:
+            from narrative import caption_beats
+        beats=[beat for scene in board.scenes for beat in caption_beats(scene)]
+        for i,(start,end,text) in enumerate(beats,1):
+            content.append(f'{i}\n{_timestamp(start)} --> {_timestamp(end)}\n{text}\n')
+        path.write_text('\n'.join(content),encoding='utf-8')
+        return
     for i, scene in enumerate(board.scenes, 1):
         text = ' '.join((scene.title + ' — ' + scene.caption).split())
         text = re.sub(r'<[^>]*>', '', text)[:240]
@@ -191,6 +201,20 @@ def build_ffmpeg_argv(board: Storyboard, assets: tuple[Asset, ...],
     if title is None:
         raise RenderFailed('title not generated')
     duration = board.options.duration_s
+    if board.schema_version==2:
+        # Artifact panels/caption beats were rasterized BEFORE the immutable freeze.
+        _write_captions(board,output.parent/'captions.srt')
+        argv=['ffmpeg','-hide_banner','-loglevel','error','-y','-framerate','24',
+              '-i',str(art_frames[0].parent/'frame_%06d.png')]
+        speech=[next((a for a in assets if a.kind=='speech' and a.scene_id==s.scene_id),None) for s in board.scenes]
+        if board.options.voice and any(a is None for a in speech): raise RenderFailed('missing narration audio')
+        if board.options.voice:
+            for a in speech: argv+=['-i',str(a.path)]
+            filters=[f'[{i+1}:a]adelay={s.start_ms}:all=1[a{i}]' for i,s in enumerate(board.scenes)]
+            filters+=[''.join(f'[a{i}]' for i in range(len(speech)))+f'amix=inputs={len(speech)}:normalize=0,apad[a]']
+            argv+=['-filter_complex',';'.join(filters),'-map','0:v','-map','[a]','-c:a','aac','-b:a','128k']
+        else: argv+=['-an']
+        return argv+['-c:v','libx264','-pix_fmt','yuv420p','-r','24','-t',str(duration),'-movflags','+faststart',str(output)]
     # Pillow rasterizes approved captions; the installed ffmpeg need not have
     # libass/subtitles or drawtext. No untrusted copy enters a shell/filter arg.
     first_frame = next((asset for asset in assets if asset.kind == 'art'), None)

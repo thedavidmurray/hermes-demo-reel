@@ -54,6 +54,13 @@ class Interviews(unittest.TestCase):
         self.addCleanup(clock.stop)
         self.source = self.root/'source.db'
         fixture(self.source)
+        # These original regressions intentionally exercise persisted legacy-v1 boards.
+        # V2 capture/generation/visual behavior has independent narrative regressions.
+        actual_read = iv.read_session
+        legacy = patch.object(iv,'read_session',side_effect=lambda *a,**k:
+            dc.replace(actual_read(*a,**k),schema_version=1,safe_summary='Legacy structured metadata.'))
+        legacy.start()
+        self.addCleanup(legacy.stop)
         self.ctx = SimpleNamespace(llm=FakeLlm(), demo_owner=lambda **kw: OWNER,
                                    demo_confirm=lambda **kw: True)
 

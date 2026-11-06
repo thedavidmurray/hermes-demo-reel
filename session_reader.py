@@ -163,7 +163,15 @@ def read_session(db_path: Path, session_ids: tuple[str,...], *, max_events: int 
                 if key in results:
                     raise ContractError('AMBIGUOUS_TOOL_RESULT')
                 results[key] = row
-        events, urls, seen_calls = [], set(), set()
+        try:
+            from .narrative import capture_excerpt
+        except ImportError:
+            from narrative import capture_excerpt
+        events, urls, seen_calls, excerpts = [], set(), set(), []
+        def add_excerpt(event, text, kind):
+            item = capture_excerpt(event,text,kind)
+            if item['text'] and len(excerpts)<500:
+                excerpts.append(item)
         origin = min(r['timestamp'] for r in rows)
         for row in rows:
             base = dict(session_id=row['session_id'],row_id=row['id'],t_ms=int((row['timestamp']-origin)*1000))
@@ -183,6 +191,23 @@ def read_session(db_path: Path, session_ids: tuple[str,...], *, max_events: int 
                         result = results.get((row['session_id'],cid))
                         events.append(redact_event(dict(base,kind='tool',tool=fn.get('name'),ordinal=i,
                             status=_status(result['content']) if result else 'unknown')))
+                        args = fn.get('arguments') or {}
+                        args = json.loads(args) if isinstance(args,str) else args
+                        if isinstance(args,dict):
+                            if fn.get('name')=='write_file' and isinstance(args.get('content'),str):
+                                add_excerpt(events[-1],args['content'],'file_input')
+                            elif fn.get('name')=='patch':
+                                add_excerpt(events[-1],args.get('new_string') or args.get('patch') or '', 'patch_input')
+                            elif fn.get('name')=='skill_manage' and isinstance(args.get('operations'),list):
+                                changes=[]
+                                for operation in args['operations'][:12]:
+                                    if isinstance(operation,dict) and isinstance(operation.get('new_string'),str):
+                                        changes.append(operation['new_string'])
+                                if changes: add_excerpt(events[-1],'\n\n'.join(changes),'patch_input')
+                            elif fn.get('name')=='terminal':
+                                add_excerpt(events[-1],args.get('command',''),'terminal_input')
+                        if result and isinstance(result['content'],str):
+                            add_excerpt(events[-1],result['content'],'tool_output')
                         if fn.get('name') in ('web_extract','browser_navigate'):
                             args = fn.get('arguments') or {}
                             args = json.loads(args) if isinstance(args,str) else args
@@ -194,10 +219,11 @@ def read_session(db_path: Path, session_ids: tuple[str,...], *, max_events: int 
                     raise ContractError('UNKNOWN_TOOL_CALL_SCHEMA') from None
             elif row['role'] in ('user','assistant'):
                 events.append(redact_event(dict(base,kind=row['role'],status='unknown')))
+                if row['role']=='user': add_excerpt(events[-1],row['content'],'ask')
             if len(events) > max_events:
                 raise ContractError('EVENT_LIMIT_EXCEEDED')
         if not events:
             raise ContractError('EMPTY_EVIDENCE')
-        summary = f'{len(events)} recorded events; {sum(e.kind == "tool" for e in events)} tool invocations. Historical durations unknown.'
-        return SessionSnapshot(1,uuid.uuid4().hex,SourceRef(path,session_ids),datetime.now(timezone.utc).isoformat(),
+        summary = _canonical({'excerpts':excerpts})
+        return SessionSnapshot(2,uuid.uuid4().hex,SourceRef(path,session_ids),datetime.now(timezone.utc).isoformat(),
                                fingerprint,tuple(events),summary,tuple(sorted(urls)))

@@ -73,7 +73,7 @@ def plan_art(snapshot: SessionSnapshot, board: Storyboard, *, width: int, height
     expected = {"9:16": (720, 1280), "16:9": (1280, 720)}.get(board.options.aspect)
     if expected is None or (width, height) != expected or type(width) is not int or type(height) is not int or type(fps) is not int or fps != 24:
         raise ValueError("art geometry must match board aspect at 24 fps")
-    if snapshot.schema_version != 1 or board.schema_version != 1:
+    if snapshot.schema_version not in (1,2) or board.schema_version != snapshot.schema_version:
         raise ValueError("unsupported evidence/board version")
     if board.evidence_snapshot_id != snapshot.snapshot_id or board.source_sha256 != snapshot.source_sha256:
         raise ValueError("storyboard evidence mismatch")
